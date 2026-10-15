@@ -41,9 +41,10 @@ class ReaderViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
-    // Reader settings (night mode, brightness), saved on the phone
-    val settings: StateFlow<ReaderSettings> = settingsRepository.settings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
+    // Reader settings saved on the phone. It is null until they have been loaded,
+    // so the reader never flashes the wrong mode (for example white before night mode).
+    val settings: StateFlow<ReaderSettings?> = settingsRepository.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // Bookmarks of this book, sorted by page
     val bookmarks: StateFlow<List<Bookmark>> = dao.getBookmarks(bookId)
@@ -112,14 +113,17 @@ class ReaderViewModel(
 
     // ---- Bookmarks ----
 
-    /** Adds a bookmark on this page, or removes it if the page is already bookmarked. */
-    fun toggleBookmark(page: Int) {
+    /**
+     * [pages] are the pages currently on screen (one page, or two in double-page view).
+     * If any of them is bookmarked, those bookmarks are removed. Otherwise the first page is bookmarked.
+     */
+    fun toggleBookmark(pages: List<Int>) {
         viewModelScope.launch {
-            val alreadyBookmarked = bookmarks.value.any { it.pageNumber == page }
-            if (alreadyBookmarked) {
-                dao.deleteBookmarkAt(bookId, page)
+            val existing = bookmarks.value.filter { it.pageNumber in pages }
+            if (existing.isNotEmpty()) {
+                existing.forEach { dao.deleteBookmark(it) }
             } else {
-                dao.insertBookmark(Bookmark(bookId = bookId, pageNumber = page))
+                pages.firstOrNull()?.let { dao.insertBookmark(Bookmark(bookId = bookId, pageNumber = it)) }
             }
         }
     }
@@ -136,6 +140,10 @@ class ReaderViewModel(
 
     fun setBrightness(value: Float) {
         viewModelScope.launch { settingsRepository.setBrightness(value) }
+    }
+
+    fun setDoublePage(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDoublePage(enabled) }
     }
 
     override fun onCleared() {
